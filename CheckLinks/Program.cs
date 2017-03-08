@@ -13,6 +13,7 @@ namespace CheckLinks
     {
         static void Main(string[] args)
         {
+            Console.WriteLine("CheckLinks started.");
             /*
             InputParameters input = new InputParameters(
                 @"C:\Users\lu\Desktop\Jacques\TestLinkCheck.accdb",
@@ -20,38 +21,69 @@ namespace CheckLinks
                 "Link",
                 "LinkOK");
             */
-            InputParameters input = InputParameters.FromArray(args);
+            InputParameters input = null;
+            try { input = InputParameters.FromArray(args); }
+            catch
+            {
+                Console.WriteLine("4 arguments required: <path> <table_name> <link_field> <ok_field>");
+            }
 
-            Execute(input);
-            Console.WriteLine("\nDone.");
+            if (input != null)
+            {
+                Execute(input);
+                Console.WriteLine("\nDone.");
+            }
             Console.ReadKey();
         }
 
         private static void Execute(InputParameters input)
         {
+            Console.WriteLine("Trying to connect...");
             OleDbConnection connection = AccessInterface.GetConnection(input.FileName);
             connection.Open();
+            Console.WriteLine("Connected.");
             Execute(connection, input);
-            //Clean(connection, input, true);
+            //Clean(connection, input, false);
             connection.Close();
         }
 
         private static void Execute(OleDbConnection connection, InputParameters input)
         {
             SetNullsNotOk(connection, input);
+            HashSet<string> validLinks = new HashSet<string>();
             foreach (DataRow row in GetNonNullDataRows(connection, input))
             {
                 string content = Convert.ToString(row[input.LinkField]);
                 string address = AccessInterface.ExtractAddress(content);
-
-                bool exists = File.Exists(address);
-
-                if (exists) Console.WriteLine("Yes: " + address);
-                else Console.WriteLine("No: " + address);
-
-                string sql = $"UPDATE [{input.TableName}] SET [{input.OkField}] = {exists} WHERE [{input.LinkField}] = \"{content}\"";
-                AccessInterface.ExecuteUpdateCommand(connection, sql);
+                
+                if (File.Exists(address))
+                {
+                    Console.WriteLine("Yes: " + address);
+                    validLinks.Add(content);
+                }
+                else
+                {
+                    Console.WriteLine("No: " + address);
+                }
             }
+
+            Console.WriteLine("\nExecuting query...");
+            string condition = getCondition(input, validLinks);
+            string sqlTrue = $"UPDATE [{input.TableName}] SET [{input.OkField}] = True WHERE {condition}";
+            AccessInterface.ExecuteUpdateCommand(connection, sqlTrue);
+            string sqlFalse = $"UPDATE [{input.TableName}] SET [{input.OkField}] = False WHERE NOT {condition}";
+            AccessInterface.ExecuteUpdateCommand(connection, sqlFalse);
+            Console.WriteLine("Query executed");
+        }
+
+        private static string getCondition(InputParameters input, HashSet<string> links)
+        { 
+            List<string> elements = new List<string>();
+            foreach(string s in links)
+            {
+                elements.Add($"\"{s}\"");
+            }
+            return $"([{input.LinkField}] IN ({String.Join(",", elements)}))";
         }
 
         private static DataRowCollection GetNonNullDataRows(OleDbConnection connection, InputParameters input)
